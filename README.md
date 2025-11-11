@@ -5,7 +5,6 @@
 This project demonstrates a fully optimized ETL (Extract, Transform, Load) and aggregation pipeline executed using PySpark on a large dataset. The analysis leverages advanced Spark optimizations, notably Filter Pushdown and Column Pruning, to achieve high-performance data processing on a multi-million row dataset.
 
 
----
 
 ### 📂 Dataset Description and Source
 
@@ -49,61 +48,84 @@ This project demonstrates a fully optimized ETL (Extract, Transform, Load) and a
 
 ---
 
-### 📊 Key Findings
+### Key Findings
 
 * Average **trip distance** and **total fare** show strong correlation across boroughs.
-* **Payment type distribution**: majority of trips are credit card-based.
 * **Peak trip hours** observed between **6 PM – 9 PM**, matching commuter rush.
-* **Data skew** noticed for trips under 1 mile — likely short local rides.
-* Query optimization reduced runtime by ~30% after caching and pruning.
+* The **highest average tip percentage** occurs late at night/early morning **12 AM and 7 AM**, perhaps reflecting a greater generosity during low-traffic periods or specific shift changes.
 
 ---
 
-### 🧠 Example Query (Spark SQL)
+### Performance Analysis and Optimization
 
-```python
-taxi_df.createOrReplaceTempView("taxi_data")
+The pipeline uses PySpark to perform several transformations and a complex aggregation (`groupBy` + multiple `agg` functions), ending with a sort operation. The total execution time for the core action (`count()`) on the $\approx 20$ million row dataset was **8.86 seconds**.
 
-spark.sql("""
-SELECT
-    HOUR(tpep_pickup_datetime) AS pickup_hour,
-    AVG(total_amount) AS avg_total_amount,
-    COUNT(*) AS trip_count
-FROM taxi_data
-GROUP BY pickup_hour
-ORDER BY pickup_hour
-""").show()
-```
+## Query Details View showing Optimization
 
----
-
-### 📈 Screenshots and Outputs
-
-#### 1️⃣ Query Execution Plan (`.explain()` output)
+#### Query Execution Plan (`.explain()` output)
 
 ```
+Execution plan:
 == Physical Plan ==
-*(2) HashAggregate(keys=[pickup_hour#321], functions=[avg(total_amount#205), count(1)])
-+- *(2) HashAggregate(keys=[pickup_hour#321], functions=[partial_avg(total_amount#205), partial_count(1)])
-   +- *(2) Project [HOUR(tpep_pickup_datetime#102) AS pickup_hour#321, total_amount#205]
-      +- *(1) FileScan csv [tpep_pickup_datetime#102,total_amount#205] Batched: false, DataFilters: [], Format: CSV, Location: InMemoryFileIndex[dbfs:/databricks-datasets/nyctaxi/tripdata/yellow/yellow_tripdata_2019-11.csv.gz]
+AdaptiveSparkPlan isFinalPlan=false
++- == Initial Plan ==
+   ColumnarToRow
+   +- PhotonResultStage
+      +- PhotonSort [pickup_hour#12398 ASC NULLS FIRST]
+         +- PhotonShuffleExchangeSource
+            +- PhotonShuffleMapStage ENSURE_REQUIREMENTS, [id=#13243]
+               +- PhotonShuffleExchangeSink rangepartitioning(pickup_hour#12398 ASC NULLS FIRST, 1024)
+                  +- PhotonGroupingAgg(keys=[pickup_hour#12398], functions=[finalmerge_sum(merge sum#12878) AS sum(fare_amount)#12873, finalmerge_count(merge count#12880L) AS count(fare_amount)#12874L, finalmerge_avg(merge sum#12883, count#12884L) AS avg(tip_percentage)#12868, finalmerge_max(merge max#12886) AS max(fare_amount)#12869, finalmerge_count(merge count#12888L) AS count(1)#12866L])
+                     +- PhotonShuffleExchangeSource
+                        +- PhotonShuffleMapStage ENSURE_REQUIREMENTS, [id=#13237]
+                           +- PhotonShuffleExchangeSink hashpartitioning(pickup_hour#12398, 1024)
+                              +- PhotonGroupingAgg(keys=[pickup_hour#12398], functions=[partial_sum(fare_amount#12154) AS sum#12878, partial_count(fare_amount#12154) AS count#12880L, partial_avg(tip_percentage#12396) AS (sum#12883, count#12884L), partial_max(fare_amount#12154) AS max#12886, partial_count(1) AS count#12888L])
+                                 +- PhotonUnion Generic
+                                    :- PhotonProject [fare_amount#12154, ((tip_amount#12157 / fare_amount#12154) * 100.0) AS tip_percentage#12396, hour(cast(from_unixtime(cast(tpep_pickup_datetime#12145 as bigint), yyyy-MM-dd HH:mm:ss, Some(Etc/UTC)) as timestamp), Some(Etc/UTC)) AS pickup_hour#12398]
+                                    :  +- PhotonFilter (((((isnotnull(passenger_count#12147) AND isnotnull(fare_amount#12154)) AND isnotnull(trip_distance#12148)) AND (passenger_count#12147 > 0)) AND (fare_amount#12154 > 0.0)) AND (trip_distance#12148 > 0.0))
+                                    :     +- PhotonRowToColumnar
+                                    :        +- FileScan csv [tpep_pickup_datetime#12145,passenger_count#12147,trip_distance#12148,fare_amount#12154,tip_amount#12157] Batched: false, DataFilters: [isnotnull(passenger_count#12147), isnotnull(fare_amount#12154), isnotnull(trip_distance#12148), ..., Format: CSV, Location: InMemoryFileIndex(1 paths)[dbfs:/databricks-datasets/nyctaxi/tripdata/yellow/yellow_tripdata_2019..., PartitionFilters: [], PushedFilters: [IsNotNull(passenger_count), IsNotNull(fare_amount), IsNotNull(trip_distance), GreaterThan(passen..., ReadSchema: struct<tpep_pickup_datetime:timestamp,passenger_count:int,trip_distance:double,fare_amount:double...
+                                    :- PhotonProject [fare_amount#12369, ((tip_amount#12372 / fare_amount#12369) * 100.0) AS tip_percentage#12871, hour(cast(from_unixtime(cast(tpep_pickup_datetime#12360 as bigint), yyyy-MM-dd HH:mm:ss, Some(Etc/UTC)) as timestamp), Some(Etc/UTC)) AS pickup_hour#12875]
+                                    :  +- PhotonFilter (((((isnotnull(passenger_count#12362) AND isnotnull(fare_amount#12369)) AND isnotnull(trip_distance#12363)) AND (passenger_count#12362 > 0)) AND (fare_amount#12369 > 0.0)) AND (trip_distance#12363 > 0.0))
+                                    :     +- PhotonRowToColumnar
+                                    :        +- FileScan csv [tpep_pickup_datetime#12360,passenger_count#12362,trip_distance#12363,fare_amount#12369,tip_amount#12372] Batched: false, DataFilters: [isnotnull(passenger_count#12362), isnotnull(fare_amount#12369), isnotnull(trip_distance#12363), ..., Format: CSV, Location: InMemoryFileIndex(1 paths)[dbfs:/databricks-datasets/nyctaxi/tripdata/yellow/yellow_tripdata_2019..., PartitionFilters: [], PushedFilters: [IsNotNull(passenger_count), IsNotNull(fare_amount), IsNotNull(trip_distance), GreaterThan(passen..., ReadSchema: struct<tpep_pickup_datetime:timestamp,passenger_count:int,trip_distance:double,fare_amount:double...
+                                    +- PhotonProject [fare_amount#12387, ((tip_amount#12390 / fare_amount#12387) * 100.0) AS tip_percentage#12872, hour(cast(from_unixtime(cast(tpep_pickup_datetime#12378 as bigint), yyyy-MM-dd HH:mm:ss, Some(Etc/UTC)) as timestamp), Some(Etc/UTC)) AS pickup_hour#12876]
+                                       +- PhotonFilter (((((isnotnull(passenger_count#12380) AND isnotnull(fare_amount#12387)) AND isnotnull(trip_distance#12381)) AND (passenger_count#12380 > 0)) AND (fare_amount#12387 > 0.0)) AND (trip_distance#12381 > 0.0))
+                                          +- PhotonRowToColumnar
+                                             +- FileScan csv [tpep_pickup_datetime#12378,passenger_count#12380,trip_distance#12381,fare_amount#12387,tip_amount#12390] Batched: false, DataFilters: [isnotnull(passenger_count#12380), isnotnull(fare_amount#12387), isnotnull(trip_distance#12381), ..., Format: CSV, Location: InMemoryFileIndex(1 paths)[dbfs:/databricks-datasets/nyctaxi/tripdata/yellow/yellow_tripdata_2019..., PartitionFilters: [], PushedFilters: [IsNotNull(passenger_count), IsNotNull(fare_amount), IsNotNull(trip_distance), GreaterThan(passen..., ReadSchema: struct<tpep_pickup_datetime:timestamp,passenger_count:int,trip_distance:double,fare_amount:double...
+
+
+== Photon Explanation ==
+The query is fully supported by Photon.
 ```
+Spark and the Databricks Photon engine aggressively optimized the execution plan using the following techniques:
 
-#### 2️⃣ Successful Pipeline Execution (Databricks Output)
+1. Photon Acceleration
+The entire aggregation and data processing pipeline leverages Photon, Databricks' vectorised engine, which significantly speeds up SQL and DataFrame operations by processing data in batches. This is visible throughout the plan with operators like PhotonSort, PhotonShuffleExchange, and PhotonGroupingAgg.
 
-![Successful pipeline screenshot](screenshots/pipeline_success.png)
+2. Filter Pushdown (Predicate Pushdown)
+This is the most critical optimization for I/O-bound queries like this. The filters (fare_amount > 0, trip_distance > 0, passenger_count > 0) were pushed down directly to the FileScan csv operator.
 
-#### 3️⃣ Query Details View Showing Optimization (Spark UI)
+**Impact:** The data is filtered before it is read into Spark's memory and passes through the rest of the pipeline. This drastically reduced the volume of data read from storage and transferred across the cluster.
 
-![Spark UI Query Optimization](screenshots/query_optimization.png)
+3. Column Pruning
 
----
+The raw CSV dataset contains many columns, but the query only required five (tpep_pickup_datetime, passenger_count, trip_distance, fare_amount, tip_amount). As seen in the plan's FileScan, only these essential columns were loaded into memory, minimizing the I/O cost.
 
-### ✅ Conclusion
+4. Two-Stage Aggregation
 
-This analysis demonstrates how **Spark’s distributed processing** and **query optimization features** (like predicate pushdown and caching) can efficiently process large-scale transportation data.
-The optimized pipeline achieved **improved query performance** and provided insights into trip distribution, fare trends, and passenger behavior.
+The aggregation (HashAggregate) is broken down into a partial aggregation step followed by a final merge aggregation, separated by a Shuffle Exchange. This highly efficient technique is standard in modern query optimizers:
+- **Partial Aggregation:** Performed locally on each worker partition.
+- **Shuffle:** Only the intermediate, reduced results are sent across the network.
+- **Final Aggregation:** The final result is computed using the merged partial results. This significantly reduces the data size that needs to be shuffled, mitigating the primary bottleneck in distributed computing.
 
----
 
-Would you like me to **generate a downloadable `README.md` file** (including Markdown formatting and placeholders for screenshots)?
+### Query Details view showing optimization
+
+![Query Detail screenshot](screenshots/Query_Detail.png)
+
+
+![Query Detail screenshot](screenshots/Query_Pipeline.png)
+
+
+## Author: Pranshul Bhatnagar
