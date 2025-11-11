@@ -98,26 +98,67 @@ AdaptiveSparkPlan isFinalPlan=false
 == Photon Explanation ==
 The query is fully supported by Photon.
 ```
-Spark and the Databricks Photon engine aggressively optimized the execution plan using the following techniques:
+Here’s a clean, well-formatted **Markdown version** of your performance analysis section — perfect for including in a `README.md` or Databricks report:
 
-1. Photon Acceleration
-The entire aggregation and data processing pipeline leverages Photon, Databricks' vectorised engine, which significantly speeds up SQL and DataFrame operations by processing data in batches. This is visible throughout the plan with operators like PhotonSort, PhotonShuffleExchange, and PhotonGroupingAgg.
+---
 
-2. Filter Pushdown (Predicate Pushdown)
-This is the most critical optimization for I/O-bound queries like this. The filters (fare_amount > 0, trip_distance > 0, passenger_count > 0) were pushed down directly to the FileScan csv operator.
+Spark and the **Databricks Photon engine** aggressively optimized the execution plan using the following techniques:
 
-**Impact:** The data is filtered before it is read into Spark's memory and passes through the rest of the pipeline. This drastically reduced the volume of data read from storage and transferred across the cluster.
 
-3. Column Pruning
+## **Photon Acceleration**
 
-The raw CSV dataset contains many columns, but the query only required five (tpep_pickup_datetime, passenger_count, trip_distance, fare_amount, tip_amount). As seen in the plan's FileScan, only these essential columns were loaded into memory, minimizing the I/O cost.
+The entire aggregation and data processing pipeline leverages **Photon**, Databricks' vectorized execution engine.
+Photon accelerates SQL and DataFrame operations by processing data in **batches** using modern CPU features (SIMD instructions).
 
-4. Two-Stage Aggregation
+You can observe this in the execution plan via operators like:
 
-The aggregation (HashAggregate) is broken down into a partial aggregation step followed by a final merge aggregation, separated by a Shuffle Exchange. This highly efficient technique is standard in modern query optimizers:
-- **Partial Aggregation:** Performed locally on each worker partition.
-- **Shuffle:** Only the intermediate, reduced results are sent across the network.
-- **Final Aggregation:** The final result is computed using the merged partial results. This significantly reduces the data size that needs to be shuffled, mitigating the primary bottleneck in distributed computing.
+* `PhotonSort`
+* `PhotonShuffleExchange`
+* `PhotonGroupingAgg`
+
+**Impact:**
+Photon drastically improves computation speed by minimizing Python overhead and optimizing memory access patterns.
+
+
+## **Filter Pushdown (Predicate Pushdown)**
+
+This is one of the most critical optimizations for I/O-bound queries.
+The filters applied —
+`fare_amount > 0`, `trip_distance > 0`, and `passenger_count > 0` —
+were **pushed down** to the `FileScan csv` operator.
+
+**Impact:**
+Data is filtered **before** being read into Spark memory.
+This reduces both:
+
+* The **volume of data** read from storage, and
+* The **amount of data** transferred across the cluster.
+
+As a result, the overall I/O and shuffle costs were significantly reduced.
+
+## **Column Pruning**
+
+The raw CSV dataset contains many columns, but the query only required:
+
+```
+tpep_pickup_datetime, passenger_count, trip_distance, fare_amount, tip_amount
+```
+
+Spark automatically performed **column pruning**, meaning only these essential columns were read into memory (visible in the `FileScan` node).
+
+**Impact:**
+Reduced I/O cost and improved memory efficiency, as unnecessary columns were never loaded or processed.
+
+## **Two-Stage Aggregation**
+
+The `HashAggregate` operation was broken down into **two stages**:
+
+* **Partial Aggregation:** Performed locally on each worker partition.
+* **Shuffle Exchange:** Only intermediate (aggregated) results are exchanged between nodes.
+* **Final Aggregation:** The final output is computed after merging partial results.
+
+**Impact:**
+This **two-phase aggregation** strategy greatly reduces shuffle size — the primary bottleneck in distributed computing — leading to improved network efficiency and faster aggregation performance.
 
 
 ### Query Details view showing optimization
